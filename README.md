@@ -99,6 +99,7 @@ Connection
   fortivpn toggle [profile]    Connect when down, disconnect when up
   fortivpn status [--json]     Profile, tunnel address, uptime
   fortivpn is-up               Exit 0 while the tunnel is up
+  fortivpn log [profile]       Read the handshake log of the last attempt
 
 Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
   fortivpn list                List profiles
@@ -122,10 +123,16 @@ click** opens status in a terminal, **middle click** forces a re-read.
 `fortivpn status --json` is what the widget consumes:
 
 ```json
-{"state":"connected","profile":"work","ip":"10.212.134.9","iface":"fortivpn0","uptime":3720}
+{"state":"disconnected","profile":"","ip":"","iface":"fortivpn0","uptime":0,
+ "default":"work","profiles":[{"name":"work","host":"vpn.example.com","default":true,"pinned":true}],
+ "error":"No response to 4 echo-requests","errorKind":"dropped","errorProfile":"work","errorAt":1793970611}
 ```
 
-`state` is one of `disconnected`, `connecting`, `connected`.
+`state` is one of `disconnected`, `connecting`, `connected`. The `error*`
+fields describe how the most recent tunnel ended, and are only filled in while
+disconnected and when it ended badly: `errorKind` is `dropped` for a tunnel
+that came up and went away, `failed` for one that never got through the
+handshake. A clean `fortivpn down` leaves them empty.
 
 ## Widget settings
 

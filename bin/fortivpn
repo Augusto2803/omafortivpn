@@ -34,7 +34,14 @@ VPN_MATCH='^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]'"$IFNAME"'( |$)'
 die() { echo "fortivpn: $*" >&2; exit 1; }
 note() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*" >&2; }
-notify() { notify-send -a "$APP" -i network-vpn "$APP" "$1" 2>/dev/null || true; }
+# notify-send bodies may be read as markup by the notification daemon, and
+# some of what lands here (a gateway's error message) is not ours to trust.
+notify() {
+  local body=${1//&/&amp;}
+  body=${body//</&lt;}
+  body=${body//>/&gt;}
+  notify-send -a "$APP" -i network-vpn "$APP" "$body" 2>/dev/null || true
+}
 
 # Same message twice: to the desktop, and to the terminal when there is one.
 # `up` and `down` are reached from the menu and the bar as often as from a
@@ -269,20 +276,76 @@ state() {
   fi
 }
 
+# The log of the most recent connection attempt, whichever profile it was for.
+newest_log() {
+  find "$STATE_DIR" -maxdepth 1 -type f -name '*.log' -printf '%T@\t%p\n' 2>/dev/null |
+    sort -rn | head -n1 | cut -f2-
+}
+
+# Whether a log is of a tunnel that came up and later went away, as opposed to
+# one that never got through the handshake.
+log_dropped() { grep -q 'Tunnel is up and running' "$1" 2>/dev/null; }
+
+# Why a tunnel ended, when it ended badly. For a failed handshake,
+# openfortivpn's first ERROR names the cause — a rejected password, an
+# unpinned certificate — and the ones after it are the teardown complaining.
+# For a tunnel that dropped, that first ERROR is only the read failing on a
+# link already gone; pppd's own line about the echo requests going unanswered
+# is the cause worth showing. A clean `fortivpn down` logs neither.
+first_error() {
+  local reason=""
+  [[ -f $1 ]] || return 0
+  grep -q '^ERROR:' "$1" || return 0
+  log_dropped "$1" && reason=$(grep -m1 -oE 'No response to [0-9]+ echo-requests' "$1")
+  [[ -n $reason ]] || reason=$(sed -nE 's/^ERROR:[[:space:]]*//p' "$1" | head -n1)
+  printf '%s\n' "$reason" | cut -c1-300
+}
+
+json_bool() { if "$@"; then echo true; else echo false; fi }
+
+profiles_json() {
+  local name conf def
+  def=$(default_profile)
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    conf=$(conf_path "$name")
+    jq -nc --arg name "$name" --arg host "$(get_key "$conf" host)" \
+      --argjson default "$(json_bool [ "$name" = "$def" ])" \
+      --argjson pinned "$(json_bool [ -n "$(get_key "$conf" trusted-cert)" ])" \
+      '{name: $name, host: $host, default: $default, pinned: $pinned}'
+  done < <(list_profiles) | jq -sc .
+}
+
 # ---------------------------------------------------------------- commands
 
 cmd_status() {
-  local st pid ip profile up
+  local st pid ip profile up log="" error="" error_at=0 error_kind=""
   pid=$(vpn_pid); ip=$(tunnel_ip); st=$(state)
   profile=$(active_profile "$pid"); up=$(uptime_seconds "$pid")
   [[ $st == disconnected ]] && { profile=""; up=0; }
+
+  # While a tunnel is up or on its way, its log is still being written and an
+  # ERROR in it is not yet the end of the story.
+  if [[ $st == disconnected ]]; then
+    log=$(newest_log)
+    error=$(first_error "$log")
+    if [[ -n $error ]]; then
+      error_at=$(stat -c %Y "$log" 2>/dev/null || echo 0)
+      if log_dropped "$log"; then error_kind=dropped; else error_kind=failed; fi
+    fi
+  fi
 
   if [[ ${1:-} == --json ]]; then
     need jq
     jq -nc \
       --arg state "$st" --arg profile "$profile" --arg ip "$ip" \
       --arg iface "$IFNAME" --argjson uptime "${up:-0}" \
-      '{state: $state, profile: $profile, ip: $ip, iface: $iface, uptime: $uptime}'
+      --arg default "$(default_profile)" --argjson profiles "$(profiles_json)" \
+      --arg error "$error" --arg errorProfile "$( [[ -n $error ]] && basename "$log" .log)" \
+      --argjson errorAt "${error_at:-0}" --arg errorKind "$error_kind" \
+      '{state: $state, profile: $profile, ip: $ip, iface: $iface, uptime: $uptime,
+        default: $default, profiles: $profiles,
+        error: $error, errorKind: $errorKind, errorProfile: $errorProfile, errorAt: $errorAt}'
     return 0
   fi
 
@@ -290,6 +353,7 @@ cmd_status() {
   [[ -n $profile ]] && echo "profile:  $profile"
   [[ -n $ip ]] && echo "address:  $ip ($IFNAME)"
   [[ ${up:-0} -gt 0 ]] && echo "uptime:   $((up / 60))m"
+  [[ -n $error ]] && echo "last end: $(basename "$log" .log) — $error (log: $log)"
   return 0
 }
 
@@ -418,8 +482,11 @@ cmd_run() {
   fi
 
   if [[ -z $(vpn_pid) ]]; then
-    warn "The connection failed. Full log: $log"
-    notify "Could not connect to $profile"
+    local reason
+    reason=$(first_error "$log")
+    warn "The connection failed${reason:+: $reason}"
+    warn "Full log: $log"
+    notify "Could not connect to $profile${reason:+: $reason}"
   else
     warn "Still negotiating after ${limit}s. Check with: fortivpn status"
     warn "The tunnel is running detached; stop it with: fortivpn down"
@@ -470,6 +537,25 @@ cmd_down() {
 }
 
 cmd_toggle() { if cmd_is_up; then cmd_down; else cmd_up "${1:-}"; fi }
+
+# The handshake log of a profile, or of the most recent attempt. It outlives the
+# connect window, so this is where a failure that window showed can be re-read.
+cmd_log() {
+  local log
+  if [[ -n ${1:-} ]]; then
+    valid_name "$1" || die "invalid profile name '$1'"
+    log="$STATE_DIR/$1.log"
+  else
+    log=$(newest_log)
+  fi
+  [[ -n $log && -f $log ]] || die "no connection log yet"
+
+  if interactive; then
+    less +G "$log"
+  else
+    omarchy-launch-floating-terminal-with-presentation "$(printf 'less +G %q' "$log")"
+  fi
+}
 
 cmd_use() {
   local profile
@@ -758,6 +844,7 @@ Connection
   fortivpn toggle [profile]    Connect when down, disconnect when up
   fortivpn status [--json]     Profile, tunnel address, uptime
   fortivpn is-up               Exit 0 while the tunnel is up
+  fortivpn log [profile]       Read the handshake log of the last attempt
 
 The handshake is logged to ~/.local/state/fortivpn/<profile>.log.
 
@@ -783,6 +870,7 @@ SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
 case "${1:-status}" in
   status) shift; cmd_status "$@" ;;
+  log) shift; cmd_log "$@" ;;
   is-up) cmd_is_up ;;
   up | connect) shift; cmd_up "$@" ;;
   down | disconnect) cmd_down ;;
