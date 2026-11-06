@@ -1,0 +1,38 @@
+{
+  "state.connected": "Connected",
+  "state.connecting": "Connecting…",
+  "state.disconnected": "Disconnected",
+  "bar.connectedTo": "Connected to %1",
+  "bar.openPanel": "Click for details",
+  "hero.connect": "Connect to %1",
+  "hero.connectHelp": "A terminal opens for the password and the 2FA token",
+  "hero.disconnect": "Disconnect",
+  "hero.noProfiles": "No profiles yet",
+  "error.dropped": "The connection to %1 dropped %2",
+  "error.failed": "Could not connect to %1 %2",
+  "error.openLog": "Open the log",
+  "profiles.header": "Profiles",
+  "profiles.default": "default",
+  "time.hoursAgo": {
+    "one": "%1 hour ago",
+    "other": "%1 hours ago"
+  },
+  "profiles.unpinned": "certificate not pinned",
+  "time.daysAgo": {
+    "one": "%1 day ago",
+    "other": "%1 days ago"
+  },
+  "profiles.setDefault": "Make default",
+  "profiles.pin": "Pin the gateway certificate",
+  "profiles.edit": "Edit",
+  "actions.new": "New profile",
+  "actions.newHelp": "Gateway, port and username",
+  "actions.log": "Connection log",
+  "actions.logHelp": "The last handshake, as openfortivpn wrote it",
+  "notify.dropped": "The connection to %1 dropped: %2",
+  "time.justNow": "just now",
+  "time.minutesAgo": {
+    "one": "%1 minute ago",
+    "other": "%1 minutes ago"
+  }
+}

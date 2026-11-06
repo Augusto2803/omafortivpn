@@ -4,8 +4,9 @@ A FortiGate SSL VPN indicator for the [Omarchy](https://omarchy.org/) bar,
 built on [openfortivpn](https://github.com/adrienverge/openfortivpn).
 
 The icon **is only in the bar while the tunnel is up**. No VPN, nothing in the
-bar. One click tears the tunnel down; connecting happens from the Omarchy menu
-or the CLI, in a floating terminal.
+bar. Clicking it opens a panel with the tunnel's state, your profiles, and what
+can be done with them; connecting itself happens in a floating terminal,
+because that is where the password and the 2FA token get typed.
 
 | | |
 |---|---|
@@ -29,7 +30,8 @@ unit that starts at boot. So:
   and `otp` appended. It is deleted as soon as the handshake settles; the
   profile itself never gains a password it did not already have.
 - The handshake is logged to `~/.local/state/fortivpn/<name>.log`, shown live
-  in the window while it connects and left behind for when it fails.
+  in the window while it connects and left behind for when it fails. Its first
+  error is what the failure notification and the panel quote as the reason.
 - **Disconnect** sends `SIGINT`, which is openfortivpn's clean shutdown: it
   removes the routes and the DNS registration before exiting.
 - The bar widget only **reads** state — does the `fortivpn0` interface have an
@@ -86,9 +88,29 @@ for every option with commentary.
 
 ## Usage
 
-From the Omarchy menu (`Super`), under **VPN**: Connect, Disconnect, Status,
-and a **Profiles** submenu with Set Default, New, Edit, Pin Certificate,
-Rename, and Delete.
+From the bar icon, a panel:
+
+- **Header**: state, address and uptime, the live profile, and a switch that
+  connects the default profile or disconnects.
+- **Profiles**: click one to connect to it. Each row offers *make default*,
+  *pin certificate* (only while none is pinned), and *edit*.
+- **New profile** and **Connection log**.
+- When the last tunnel dropped or failed, the panel says so, when, and why.
+
+The keyboard works too: arrows or `j`/`k` move, `Enter` activates, `r`
+re-reads, `n` creates a profile, and on a profile row `s` makes it the
+default, `p` pins its certificate, `e` edits it. `Tab` moves to the
+neighbouring panel in the bar.
+
+A tunnel that drops on its own — the gateway stops answering pppd's echo
+requests — is announced with a notification, once, naming the reason.
+
+The panel follows the language set under Setup > Language; English and
+Brazilian Portuguese ship in [`i18n/`](i18n/).
+
+From the Omarchy menu (`Super`), under **VPN**: Connect, Disconnect, Status
+(opens the panel), and a **Profiles** submenu with Set Default, New, Edit,
+Pin Certificate, Rename, and Delete.
 
 From the terminal:
 
@@ -116,9 +138,9 @@ Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
 Omitting `[profile]` opens a `gum` picker when there is a terminal to show it
 in, and falls back to the default profile everywhere else.
 
-On the bar icon: **left click** toggles the tunnel — disconnect while it is up,
-and connect when the icon is showing at all while down (`alwaysShow`) — **right
-click** opens status in a terminal, **middle click** forces a re-read.
+On the bar icon: **left click** opens the panel, **middle click** toggles the
+tunnel (connect the default profile, or disconnect), **right click** forces a
+re-read.
 
 `fortivpn status --json` is what the widget consumes:
 
@@ -145,14 +167,20 @@ In `~/.config/omarchy/shell.json`, on the widget's layout entry:
 | Key | Default | Meaning |
 |---|---|---|
 | `refreshIntervalSec` | `5` | How often state is re-read. During a connection in progress the widget re-reads every second on its own. |
-| `alwaysShow` | `false` | Keep the icon in the bar while disconnected, dimmed, so a click connects instead of doing nothing. |
+| `alwaysShow` | `false` | Keep the icon in the bar while disconnected, dimmed, so the panel is a click away. |
 
-The widget also registers an IPC target:
+The widget also registers an IPC target, for keybindings and scripts:
 
 ```bash
+omarchy-shell io.github.augusto2803.fortivpn toggle        # open or close the panel
+omarchy-shell io.github.augusto2803.fortivpn toggleTunnel  # connect the default profile, or disconnect
+omarchy-shell io.github.augusto2803.fortivpn connect
+omarchy-shell io.github.augusto2803.fortivpn disconnect
 omarchy-shell io.github.augusto2803.fortivpn refresh
-omarchy-shell io.github.augusto2803.fortivpn toggle
 ```
+
+`open` and `close` are there too. The panel opens even while the icon is
+hidden, and the icon stays until it closes.
 
 ## DNS
 

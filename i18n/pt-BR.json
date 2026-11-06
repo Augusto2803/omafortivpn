@@ -1,0 +1,38 @@
+{
+  "state.connected": "Conectado",
+  "state.connecting": "Conectando…",
+  "state.disconnected": "Desconectado",
+  "bar.connectedTo": "Conectado a %1",
+  "bar.openPanel": "Clique para ver detalhes",
+  "hero.connect": "Conectar a %1",
+  "hero.connectHelp": "Um terminal abre para a senha e o token 2FA",
+  "hero.disconnect": "Desconectar",
+  "hero.noProfiles": "Nenhum perfil ainda",
+  "error.dropped": "A conexão com %1 caiu %2",
+  "error.failed": "Não foi possível conectar a %1 %2",
+  "error.openLog": "Abrir o log",
+  "profiles.header": "Perfis",
+  "profiles.default": "padrão",
+  "time.hoursAgo": {
+    "one": "há %1 hora",
+    "other": "há %1 horas"
+  },
+  "profiles.unpinned": "certificado não fixado",
+  "time.daysAgo": {
+    "one": "há %1 dia",
+    "other": "há %1 dias"
+  },
+  "profiles.setDefault": "Tornar padrão",
+  "profiles.pin": "Fixar o certificado do gateway",
+  "profiles.edit": "Editar",
+  "actions.new": "Novo perfil",
+  "actions.newHelp": "Gateway, porta e usuário",
+  "actions.log": "Log da conexão",
+  "actions.logHelp": "O último handshake, como o openfortivpn registrou",
+  "notify.dropped": "A conexão com %1 caiu: %2",
+  "time.justNow": "agora há pouco",
+  "time.minutesAgo": {
+    "one": "há %1 minuto",
+    "other": "há %1 minutos"
+  }
+}

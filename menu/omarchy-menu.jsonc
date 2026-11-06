@@ -26,8 +26,8 @@
   "vpn.status": {
     "icon":"󰋼",
     "label":"Status",
-    "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn status'",
-    "description":"profile, tunnel address and uptime",
+    "action":"omarchy-shell io.github.augusto2803.fortivpn open",
+    "description":"open the FortiVPN panel: tunnel, profiles, last error",
     "when":"omarchy-cmd-present fortivpn"
   },
 
