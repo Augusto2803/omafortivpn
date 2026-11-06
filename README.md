@@ -25,13 +25,19 @@ unit that starts at boot. So:
   `openfortivpn` as a transient systemd unit and closes as soon as the tunnel
   is up. The window holds nothing the connection needs — the tunnel outlives
   it, and `fortivpn down` is what ends it.
-- The secrets reach the detached process through a copy of the profile written
-  to `$XDG_RUNTIME_DIR/fortivpn/<name>.conf` (tmpfs, mode 600) with `password`
-  and `otp` appended. It is deleted as soon as the handshake settles; the
-  profile itself never gains a password it did not already have.
-- The handshake is logged to `~/.local/state/fortivpn/<name>.log`, shown live
-  in the window while it connects and left behind for when it fails. Its first
-  error is what the failure notification and the panel quote as the reason.
+- The secrets reach the detached process through a copy of the profile with
+  `password` and `otp` appended, piped to root and written by root to
+  `/run/fortivpn/<name>.conf` (tmpfs, root-only directory, mode 600). It is
+  deleted as soon as the handshake settles, and again by the unit when the
+  tunnel stops; the profile itself never gains a password it did not already
+  have.
+- The handshake is logged to `/var/log/fortivpn/<uid>/<name>.log`, created by
+  root and readable by your group, shown live in the window while it connects
+  and left behind for when it fails. Its first error is what the failure
+  notification and the panel quote as the reason.
+- Nothing root reads or writes for the tunnel sits at a path you own, so
+  nothing running as you can swap a file out between the sudo prompt and the
+  moment root uses it.
 - **Disconnect** sends `SIGINT`, which is openfortivpn's clean shutdown: it
   removes the routes and the DNS registration before exiting.
 - The bar widget only **reads** state — does the `fortivpn0` interface have an
@@ -217,16 +223,26 @@ resolvectl query dataflow.unimedsc.coop.br
 
 ## The sudo password
 
-Three commands in this plugin cross a privilege boundary, and these are them in
+Four commands in this plugin cross a privilege boundary, and these are them in
 full:
 
 ```bash
-# Connect — sudo prompts in the floating terminal, then hands the tunnel to PID 1
+# Connect — sudo prompts in the floating terminal. The transient config is
+# piped to root and the log created by root, both in root-owned directories;
+# then the tunnel is handed to PID 1
+sudo install -d -m 0700 -o root -g root /run/fortivpn
+<profile + password + otp> | sudo install -m 0600 -o root -g root /dev/stdin /run/fortivpn/<name>.conf
+sudo install -d -m 0750 -o root -g <your gid> /var/log/fortivpn/<uid>
+sudo install -m 0640 -o root -g <your gid> /dev/null /var/log/fortivpn/<uid>/<name>.log
 sudo systemd-run --quiet --collect --unit=fortivpn-tunnel \
   --property=Type=exec --property=KillSignal=SIGINT \
-  --property=StandardOutput=append:$HOME/.local/state/fortivpn/<name>.log \
-  --property=StandardError=append:$HOME/.local/state/fortivpn/<name>.log \
-  /usr/bin/openfortivpn -c "$XDG_RUNTIME_DIR/fortivpn/<name>.conf" --pppd-ifname=fortivpn0
+  --property=StandardOutput=append:/var/log/fortivpn/<uid>/<name>.log \
+  --property=StandardError=append:/var/log/fortivpn/<uid>/<name>.log \
+  --property=ExecStopPost="/usr/bin/rm -f -- /run/fortivpn/<name>.conf" \
+  /usr/bin/openfortivpn -c /run/fortivpn/<name>.conf --pppd-ifname=fortivpn0
+
+# Once the handshake settles — same sudo timestamp, no prompt
+sudo -n rm -f -- /run/fortivpn/<name>.conf
 
 # Split DNS (only for profiles with dns-routing-domain) — reuses the sudo
 # timestamp the connect just primed, so it costs no extra prompt

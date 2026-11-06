@@ -12,8 +12,14 @@ set -uo pipefail
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fortivpn"
 PROFILE_DIR="$CONFIG_DIR/profiles"
 DEFAULT_FILE="$CONFIG_DIR/default"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/fortivpn"
-RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/fortivpn"
+# Everything root reads or writes for the tunnel lives in directories only
+# root can write to, so nothing running as you can swap a file out from under
+# the privileged side between the sudo prompt and the moment it is used.
+# The transient config holds secrets and is root's alone; the log directory is
+# readable by your group so the window, the panel and `fortivpn log` can show it.
+RUN_DIR=/run/fortivpn
+LOG_DIR="/var/log/fortivpn/$(id -u)"
+OPENFORTIVPN=/usr/bin/openfortivpn
 IFNAME=fortivpn0
 APP=FortiVPN
 UNIT=fortivpn-tunnel
@@ -278,7 +284,7 @@ state() {
 
 # The log of the most recent connection attempt, whichever profile it was for.
 newest_log() {
-  find "$STATE_DIR" -maxdepth 1 -type f -name '*.log' -printf '%T@\t%p\n' 2>/dev/null |
+  find "$LOG_DIR" -maxdepth 1 -type f -name '*.log' -printf '%T@\t%p\n' 2>/dev/null |
     sort -rn | head -n1 | cut -f2-
 }
 
@@ -360,9 +366,11 @@ cmd_status() {
 cmd_is_up() { [[ $(state) == connected ]]; }
 
 # Removing the transient config is the one thing that must happen on every
-# path out of cmd_run, including a Ctrl+C at the password prompt.
+# path out of cmd_run, including a Ctrl+C at the password prompt. It is root's
+# file, so this rides on the sudo timestamp the connect primed; the unit's
+# ExecStopPost and the tmpfs it lives on are the backstops if that has lapsed.
 run_cleanup() {
-  [[ -n $RUN_CONF ]] && rm -f "$RUN_CONF"
+  [[ -n $RUN_CONF ]] && sudo -n rm -f -- "$RUN_CONF" 2>/dev/null
   RUN_CONF=""
   return 0
 }
@@ -375,7 +383,7 @@ cmd_run() {
   local profile=$1 conf log password="" token="" waited=0 limit=90 tail_pid=""
   conf=$(conf_path "$profile")
   [[ -f $conf ]] || die "no profile named '$profile'"
-  need openfortivpn
+  [[ -x $OPENFORTIVPN ]] || die "'$OPENFORTIVPN' is required but not installed"
   need systemd-run
 
   echo "Connecting to '$profile'…"
@@ -400,31 +408,35 @@ cmd_run() {
 
   # openfortivpn reads the password and the one-time token from its config
   # file, and a config file is the only way to hand them to a process that has
-  # no terminal to be asked on. This copy lives on tmpfs, mode 600, for the
-  # seconds between here and the handshake, and is deleted as soon as
-  # openfortivpn has read it — the profile itself never gains a password it
-  # did not already have.
+  # no terminal to be asked on. The copy is streamed to root over a pipe and
+  # written by root into a root-only directory on tmpfs, mode 600: what the
+  # tunnel reads is exactly what was piped, and no path you own is ever
+  # handed to it. It is deleted as soon as the handshake settles — the profile
+  # itself never gains a password it did not already have.
   #
   # It is named for the profile, not for the run, because the indicator reads
   # the live profile name off the `-c` argument of the running process.
-  mkdir -p "$RUNTIME_DIR" && chmod 700 "$RUNTIME_DIR"
-  RUN_CONF="$RUNTIME_DIR/$profile.conf"
+  sudo install -d -m 0700 -o root -g root "$RUN_DIR" ||
+    die "could not create $RUN_DIR"
+  RUN_CONF="$RUN_DIR/$profile.conf"
   trap 'run_cleanup; exit 130' INT TERM
   trap run_cleanup EXIT
 
-  rm -f "$RUN_CONF"
-  (umask 077; : >"$RUN_CONF") || die "could not write $RUN_CONF"
   {
     cat "$conf"
     [[ -n $password ]] && printf 'password = %s\n' "$password"
     [[ -n $token ]] && printf 'otp = %s\n' "$token"
     :
-  } >"$RUN_CONF"
+  } | sudo install -m 0600 -o root -g root /dev/stdin "$RUN_CONF" ||
+    die "could not write $RUN_CONF"
 
-  mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
-  log="$STATE_DIR/$profile.log"
-  rm -f "$log"
-  (umask 077; : >"$log") || die "could not write $log"
+  # The log is created empty by root, in a directory only root can write to,
+  # before systemd opens it for appending; your group can read both.
+  sudo install -d -m 0750 -o root -g "$(id -g)" "$LOG_DIR" ||
+    die "could not create $LOG_DIR"
+  log="$LOG_DIR/$profile.log"
+  sudo install -m 0640 -o root -g "$(id -g)" /dev/null "$log" ||
+    die "could not create $log"
 
   # Root is needed for the tunnel, but sudo must not be the thing that owns
   # it. Since 1.9.14 sudo runs its command in a pty by default (`use_pty`),
@@ -446,7 +458,8 @@ cmd_run() {
     --property=KillSignal=SIGINT \
     --property=StandardOutput=append:"$log" \
     --property=StandardError=append:"$log" \
-    "$(command -v openfortivpn)" -c "$RUN_CONF" --pppd-ifname="$IFNAME" ||
+    --property=ExecStopPost="/usr/bin/rm -f -- $RUN_CONF" \
+    "$OPENFORTIVPN" -c "$RUN_CONF" --pppd-ifname="$IFNAME" ||
     die "could not start the tunnel; if a stale unit is in the way: sudo systemctl reset-failed $UNIT"
 
   # Show the handshake while it happens. There is nothing to watch after it,
@@ -544,7 +557,7 @@ cmd_log() {
   local log
   if [[ -n ${1:-} ]]; then
     valid_name "$1" || die "invalid profile name '$1'"
-    log="$STATE_DIR/$1.log"
+    log="$LOG_DIR/$1.log"
   else
     log=$(newest_log)
   fi

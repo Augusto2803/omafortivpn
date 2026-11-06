@@ -6,7 +6,7 @@
 #
 #   ./uninstall.sh                remove the wiring, keep profiles and plugin files
 #   ./uninstall.sh --profiles     also delete ~/.config/fortivpn and the logs in
-#                                 ~/.local/state/fortivpn
+#                                 /var/log/fortivpn/<uid> (asks for sudo)
 #   ./uninstall.sh --plugin       also delete the installed plugin directory
 #   ./uninstall.sh --all --yes    everything, no prompts
 
@@ -18,8 +18,8 @@ PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 BIN_LINK="$HOME/.local/bin/fortivpn"
 MENU_FILE="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 PROFILE_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/fortivpn"
-STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/fortivpn"
-RUNTIME_ROOT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/fortivpn"
+LOG_ROOT="/var/log/fortivpn/$(id -u)"
+RUN_ROOT=/run/fortivpn
 BEGIN_MARK="// >>> $PLUGIN_ID — managed by install.sh, edits here are overwritten"
 END_MARK="// <<< $PLUGIN_ID"
 
@@ -111,20 +111,20 @@ if ((DROP_PROFILES)); then
     rm -rf "${PROFILE_ROOT:?}"
     say "Deleted $PROFILE_ROOT"
   fi
-  # The connection logs are the other thing this plugin leaves in your home,
-  # so they go with the profiles rather than outliving them.
-  if [[ -d $STATE_ROOT ]]; then
-    rm -rf "${STATE_ROOT:?}"
-    say "Deleted $STATE_ROOT"
+  # The connection logs are the other thing this plugin leaves behind for you,
+  # so they go with the profiles rather than outliving them. Root owns them.
+  if [[ -d $LOG_ROOT ]]; then
+    sudo rm -rf -- "$LOG_ROOT"
+    say "Deleted $LOG_ROOT"
   fi
 elif [[ -d $PROFILE_ROOT ]]; then
   say "Your profiles are untouched in $PROFILE_ROOT (remove them with --profiles)"
 fi
 
-# Whatever a killed connect left behind on tmpfs. It would go at logout anyway,
+# Whatever a killed connect left behind on tmpfs. It would go at reboot anyway,
 # but a file that once held a password should not wait for one.
-if [[ -d $RUNTIME_ROOT ]]; then
-  rm -rf "${RUNTIME_ROOT:?}"
+if [[ -d $RUN_ROOT ]]; then
+  sudo rm -rf -- "$RUN_ROOT"
 fi
 
 # ---------------------------------------------------------------- plugin files
