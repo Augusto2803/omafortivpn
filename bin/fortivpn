@@ -192,9 +192,22 @@ sync_dns_routing_domains() {
     [[ " ${current_domains[*]} " == *" $domain "* ]] || current_domains+=("$domain")
   done
 
-  resolvectl domain "$IFNAME" "${current_domains[@]}" &&
-    resolvectl flush-caches ||
+  resolve_as_root domain "$IFNAME" "${current_domains[@]}" &&
+    resolve_as_root flush-caches ||
     warn "Could not configure split-DNS routing domains on $IFNAME"
+}
+
+# resolved guards set-domains and flush-caches with polkit `auth_admin_keep`,
+# which keeps the grant for one calling process only: run unprivileged, each
+# resolvectl call is a password dialog of its own, on top of the sudo prompt
+# the connect has just answered. That sudo timestamp is still fresh here, so
+# spend it; polkit stays the fallback when there is no way to ask for sudo.
+resolve_as_root() {
+  if sudo -n true 2>/dev/null || interactive; then
+    sudo resolvectl "$@"
+  else
+    resolvectl "$@"
+  fi
 }
 
 set_dns_routing_domains() {

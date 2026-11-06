@@ -182,7 +182,7 @@ resolvectl query dataflow.unimedsc.coop.br
 
 ## The sudo password
 
-Two commands in this plugin cross a privilege boundary, and these are them in
+Three commands in this plugin cross a privilege boundary, and these are them in
 full:
 
 ```bash
@@ -193,6 +193,11 @@ sudo systemd-run --quiet --collect --unit=fortivpn-tunnel \
   --property=StandardError=append:$HOME/.local/state/fortivpn/<name>.log \
   /usr/bin/openfortivpn -c "$XDG_RUNTIME_DIR/fortivpn/<name>.conf" --pppd-ifname=fortivpn0
 
+# Split DNS (only for profiles with dns-routing-domain) — reuses the sudo
+# timestamp the connect just primed, so it costs no extra prompt
+sudo resolvectl domain fortivpn0 <gateway search domains> ~<zone>...
+sudo resolvectl flush-caches
+
 # Disconnect — sudo -n when a cached credential allows it, pkexec otherwise
 pkill -INT -f -- '^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]fortivpn0( |$)'
 ```
@@ -200,7 +205,11 @@ pkill -INT -f -- '^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]fortivpn0( |$)'
 Nothing else needs root: creating, editing, deleting and pinning profiles never
 do, and the bar widget only reads whether `fortivpn0` has an address.
 
-`Connect` runs in a terminal, so `sudo` asks for the password right there.
+`Connect` runs in a terminal, so `sudo` asks for the password right there,
+once: the split-DNS step rides on the same sudo timestamp. Run unprivileged,
+each `resolvectl` call would be a polkit dialog of its own, because resolved's
+`auth_admin_keep` grant covers only the process that asked for it. Without a
+sudo credential or a terminal to ask on, it falls back to exactly that.
 `Disconnect` has no terminal: it uses `sudo -n` when it can and falls back to
 `pkexec` (the polkit dialog) otherwise.
 
