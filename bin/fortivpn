@@ -149,6 +149,69 @@ set_key() {
   cat "$tmp" >"$file"
   rm -f "$tmp"
 }
+# `openfortivpn` can register DNS servers and search domains supplied by the
+# gateway, but it cannot configure additional split-DNS routing domains. Keep
+# those as comments so the file remains a valid upstream openfortivpn profile.
+dns_routing_domains() {
+  sed -nE 's/^[[:space:]]*#[[:space:]]*dns-routing-domain[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' "$1"
+}
+
+valid_dns_domain() {
+  local domain=${1%.} label
+  [[ -n $domain && ${#domain} -le 253 && $domain != .* && $domain != *. && $domain != *..* ]] || return 1
+  IFS=. read -r -a labels <<<"$domain"
+  for label in "${labels[@]}"; do
+    [[ $label =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || return 1
+  done
+}
+
+# Preserve the gateway's DNS search domains and add the profile's route-only
+# domains. The latter direct only matching lookups through the VPN DNS.
+sync_dns_routing_domains() {
+  local conf=$1 domain current
+  local -a current_domains=() domains=() route_domains=()
+
+  command -v resolvectl >/dev/null || return 0
+  mapfile -t domains < <(dns_routing_domains "$conf")
+  ((${#domains[@]})) || return 0
+
+  for domain in "${domains[@]}"; do
+    domain=${domain%.}
+    valid_dns_domain "$domain" || {
+      warn "Ignoring invalid dns-routing-domain '$domain' in $conf"
+      continue
+    }
+    route_domains+=("~$domain")
+  done
+  ((${#route_domains[@]})) || return 0
+
+  current=$(resolvectl domain "$IFNAME" 2>/dev/null | sed -nE 's/^[^:]*:[[:space:]]*//p')
+  [[ -n $current ]] && read -r -a current_domains <<<"$current"
+
+  for domain in "${route_domains[@]}"; do
+    [[ " ${current_domains[*]} " == *" $domain "* ]] || current_domains+=("$domain")
+  done
+
+  resolvectl domain "$IFNAME" "${current_domains[@]}" &&
+    resolvectl flush-caches ||
+    warn "Could not configure split-DNS routing domains on $IFNAME"
+}
+
+set_dns_routing_domains() {
+  local conf=$1 domain tmp
+  shift
+  tmp=$(mktemp) || die "could not create a temporary file"
+  awk '!/^[[:space:]]*#[[:space:]]*dns-routing-domain[[:space:]]*=/' "$conf" >"$tmp"
+  {
+    printf '\n# Additional private DNS zones routed only through this VPN.\n'
+    for domain in "$@"; do
+      printf '# dns-routing-domain = %s\n' "$domain"
+    done
+  } >>"$tmp"
+  cat "$tmp" >"$conf"
+  rm -f "$tmp"
+}
+
 
 # ---------------------------------------------------------------- state
 
@@ -336,6 +399,7 @@ cmd_run() {
   echo
 
   if cmd_is_up; then
+    sync_dns_routing_domains "$conf"
     announce "Connected to $profile"
     return 0
   fi
@@ -406,12 +470,14 @@ cmd_use() {
 
 cmd_new() {
   local name="" host="" port=443 port_given=0 username="" set_routes=1
+  local -a dns_domains=()
 
   while (($# > 0)); do
     case $1 in
       --host) host=${2:-}; shift 2 ;;
       --port) port=${2:-}; port_given=1; shift 2 ;;
       --username | --user) username=${2:-}; shift 2 ;;
+      --dns-domain) dns_domains+=("${2:-}"); shift 2 ;;
       --split-tunnel) set_routes=0; shift ;;
       -*) die "unknown option for new: $1" ;;
       *) name=$1; shift ;;
@@ -453,6 +519,11 @@ cmd_new() {
 
   [[ $port =~ ^[0-9]+$ ]] || die "port must be a number"
 
+  for domain in "${dns_domains[@]}"; do
+    domain=${domain%.}
+    valid_dns_domain "$domain" || die "invalid DNS routing domain '$domain'"
+  done
+
   if interactive && command -v gum >/dev/null; then
     gum confirm "Route all traffic through the VPN (full tunnel)?" && set_routes=1 || set_routes=0
   fi
@@ -462,7 +533,7 @@ cmd_new() {
 
   local conf
   conf=$(conf_path "$name")
-  (umask 077; write_profile "$conf" "$host" "$port" "$username" "$set_routes")
+  (umask 077; write_profile "$conf" "$host" "$port" "$username" "$set_routes" "${dns_domains[@]}")
   chmod 600 "$conf"
   note "Created $conf"
 
@@ -477,7 +548,8 @@ cmd_new() {
 }
 
 write_profile() {
-  local conf=$1 host=$2 port=$3 username=$4 set_routes=$5
+  local conf=$1 host=$2 port=$3 username=$4 set_routes=$5 domain
+  shift 5
   cat >"$conf" <<CONF
 # openfortivpn profile '$(basename "$conf" .conf)'.
 # Managed by the Omarchy FortiVPN plugin — see \`fortivpn help\`.
@@ -515,6 +587,17 @@ use-resolvconf = 1
 # pppd can rewrite resolv.conf as well and races openfortivpn for it. Leaving
 # it off keeps the two from fighting.
 pppd-use-peerdns = 0
+CONF
+  if (($#)); then
+    cat >>"$conf" <<'CONF'
+
+# Additional private DNS zones routed only through this VPN.
+CONF
+    for domain in "$@"; do
+      printf '# dns-routing-domain = %s\n' "${domain%.}" >>"$conf"
+    done
+  fi
+  cat >>"$conf" <<CONF
 
 # 1 sends all traffic through the tunnel (full tunnel). Use 0 when the gateway
 # already pushes the split-tunnel routes you need.
@@ -534,6 +617,25 @@ cmd_edit() {
     omarchy-launch-floating-terminal-with-presentation "$(printf '%q %q' "${EDITOR:-nvim}" "$conf")"
   fi
 }
+cmd_dns() {
+  local profile conf domain
+  (($# >= 2)) || die "usage: fortivpn dns <profile> <domain> [domain...]"
+  profile=$(resolve_profile "$1") || exit 1
+  shift
+  conf=$(conf_path "$profile")
+
+  for domain in "$@"; do
+    domain=${domain%.}
+    valid_dns_domain "$domain" || die "invalid DNS routing domain '$domain'"
+  done
+
+  set_dns_routing_domains "$conf" "$@"
+  if cmd_is_up && [[ $profile == $(active_profile "$(vpn_pid)") ]]; then
+    sync_dns_routing_domains "$conf"
+  fi
+  note "Configured split-DNS domains for '$profile': $*"
+}
+
 
 cmd_delete() {
   local profile conf assume_yes=0 args=()
@@ -648,8 +750,10 @@ The handshake is logged to ~/.local/state/fortivpn/<profile>.log.
 
 Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
   fortivpn list                List profiles
-  fortivpn new [name] [opts]   Create a profile  (--host --port --username --split-tunnel)
+  fortivpn new [name] [opts]   Create a profile  (--host --port --username --dns-domain --split-tunnel)
   fortivpn edit [profile]      Open a profile in $EDITOR
+  fortivpn dns <profile> <domain...>
+                               Route private DNS zones through this VPN
   fortivpn delete [profile]    Delete a profile  (--yes to skip the prompt)
   fortivpn rename <old> [new]  Rename a profile
   fortivpn use [profile]       Set the default profile
@@ -674,6 +778,7 @@ case "${1:-status}" in
   use) shift; cmd_use "$@" ;;
   new | create | add) shift; cmd_new "$@" ;;
   edit) shift; cmd_edit "$@" ;;
+  dns) shift; cmd_dns "$@" ;;
   delete | remove | rm) shift; cmd_delete "$@" ;;
   rename | mv) shift; cmd_rename "$@" ;;
   trust) shift; cmd_trust "$@" ;;

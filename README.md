@@ -102,8 +102,10 @@ Connection
 
 Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
   fortivpn list                List profiles
-  fortivpn new [name] [opts]   Create a profile  (--host --port --username --split-tunnel)
+  fortivpn new [name] [opts]   Create a profile  (--host --port --username --dns-domain --split-tunnel)
   fortivpn edit [profile]      Open a profile in $EDITOR
+  fortivpn dns <profile> <domain...>
+                               Route private DNS zones through this VPN
   fortivpn delete [profile]    Delete a profile  (--yes to skip the prompt)
   fortivpn rename <old> [new]  Rename a profile
   fortivpn use [profile]       Set the default profile
@@ -148,12 +150,34 @@ omarchy-shell io.github.augusto2803.fortivpn toggle
 ## DNS
 
 Omarchy runs `systemd-resolved`, and `/usr/bin/resolvconf` is the `resolvectl`
-shim. With `use-resolvconf = 1` in the profile, the company's DNS servers are
-registered **against the `fortivpn0` interface** — real split-DNS, rather than
-overwriting the system's `/etc/resolv.conf`. To see what the tunnel pushed:
+shim. With `use-resolvconf = 1` in the profile, the gateway's DNS servers and
+search domains are registered against `fortivpn0`, instead of overwriting
+`/etc/resolv.conf`.
+
+Some networks use private DNS zones that the gateway does not advertise as
+search domains. Those names otherwise go to the Wi-Fi DNS and fail. Configure
+each such zone once per profile:
+
+```bash
+# Existing profile; applies immediately when this profile is connected.
+fortivpn dns work unimedsc.coop.br
+
+# New profile; repeat --dns-domain for more than one zone.
+fortivpn new work --host vpn.example.com --username your.user \
+  --dns-domain unimedsc.coop.br
+```
+
+The command stores `# dns-routing-domain = …` comments in the profile, so
+openfortivpn still accepts the file unchanged. Once the tunnel is connected,
+the plugin adds each zone as a route-only domain (`~zone`) on `fortivpn0`,
+preserving the gateway-provided search domains. It also flushes DNS cache, so
+the previously failed name is retried through the VPN immediately.
+
+To inspect the live resolver state:
 
 ```bash
 resolvectl status fortivpn0
+resolvectl query dataflow.unimedsc.coop.br
 ```
 
 ## The sudo password

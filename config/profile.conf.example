@@ -42,6 +42,12 @@ use-resolvconf = 1
 # it off keeps the two from fighting.
 pppd-use-peerdns = 0
 
+# Private zones that are not supplied by the VPN gateway need route-only DNS
+# entries, or systemd-resolved will ask the normal network DNS instead. Add one
+# commented directive for each zone; `fortivpn dns <profile> <domain...>` writes
+# these for you.
+# dns-routing-domain = intranet.example.com
+
 # 1 sends all traffic through the tunnel (full tunnel). Use 0 when the gateway
 # already pushes the split-tunnel routes you need.
 set-routes = 1
