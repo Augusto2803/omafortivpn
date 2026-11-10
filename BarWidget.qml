@@ -10,9 +10,9 @@ import "Model.js" as Model
 
 // FortiGate SSL VPN indicator and panel.
 //
-// By default the icon takes no room in the bar until a tunnel is up; set
-// `alwaysShow` to keep it there. Clicking it opens a panel with the tunnel
-// state, the profiles, and what can be done with them.
+// The icon stays in the bar, dimmed while disconnected; set `alwaysShow` to
+// false to show it only while a tunnel is up. Clicking it opens a panel with
+// the tunnel state, the profiles, and what can be done with them.
 //
 // Connecting is deliberately not done inside the panel. openfortivpn asks for
 // a password and then a 2FA token that rotates every 30 seconds, and sudo for
@@ -30,7 +30,7 @@ Panel {
   readonly property bool connecting: status.connecting === true
   readonly property bool up: connected || connecting
   readonly property var profiles: status.profiles
-  readonly property bool alwaysShow: setting("alwaysShow", false) === true
+  readonly property bool alwaysShow: setting("alwaysShow", true) !== false
 
   // Countdown of fast re-reads owed after an action. A plain settle.restart()
   // would assign `running` imperatively and blow away its binding, so the

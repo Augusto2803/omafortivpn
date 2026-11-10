@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "io.github.augusto2803.fortivpn",
   "name": "FortiVPN",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "Augusto Bauer Domingos",
   "license": "MIT",
   "homepage": "https://github.com/Augusto2803/omarchy-fortivpn",
-  "description": "FortiGate SSL VPN indicator and panel for the Omarchy bar, on top of openfortivpn. The icon appears while the tunnel is up; its panel shows the tunnel, switches profiles, and says why the last connection failed or dropped. Connecting opens a floating terminal because the password and 2FA token have to be typed.",
+  "description": "FortiGate SSL VPN indicator and panel for the Omarchy bar, on top of openfortivpn. The icon stays in the bar, dimmed while disconnected; middle click connects or disconnects, and its panel shows the tunnel, switches profiles, and says why the last connection failed or dropped. Connecting opens a floating terminal because the password and 2FA token have to be typed.",
   "kinds": [
     "bar-widget"
   ],
@@ -21,7 +21,7 @@
     "defaultSection": "right",
     "defaults": {
       "refreshIntervalSec": 5,
-      "alwaysShow": false
+      "alwaysShow": true
     },
     "schema": [
       {
@@ -37,7 +37,7 @@
         "key": "alwaysShow",
         "type": "boolean",
         "label": "Keep the icon visible while disconnected",
-        "defaultValue": false
+        "defaultValue": true
       }
     ]
   }

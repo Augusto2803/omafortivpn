@@ -3,10 +3,11 @@
 A FortiGate SSL VPN indicator for the [Omarchy](https://omarchy.org/) bar,
 built on [openfortivpn](https://github.com/adrienverge/openfortivpn).
 
-The icon **is only in the bar while the tunnel is up**. No VPN, nothing in the
-bar. Clicking it opens a panel with the tunnel's state, your profiles, and what
-can be done with them; connecting itself happens in a floating terminal,
-because that is where the password and the 2FA token get typed.
+The icon **stays in the bar**, dimmed while disconnected and lit while the
+tunnel is up. Middle click connects or disconnects the default profile; left
+click opens a panel with the tunnel's state, your profiles, and what can be
+done with them. Connecting itself happens in a floating terminal, because that
+is where the password and the 2FA token get typed.
 
 | | |
 |---|---|
@@ -167,13 +168,13 @@ handshake. A clean `fortivpn down` leaves them empty.
 In `~/.config/omarchy/shell.json`, on the widget's layout entry:
 
 ```json
-{ "id": "io.github.augusto2803.fortivpn", "refreshIntervalSec": 5, "alwaysShow": false }
+{ "id": "io.github.augusto2803.fortivpn", "refreshIntervalSec": 5, "alwaysShow": true }
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
 | `refreshIntervalSec` | `5` | How often state is re-read. During a connection in progress the widget re-reads every second on its own. |
-| `alwaysShow` | `false` | Keep the icon in the bar while disconnected, dimmed, so the panel is a click away. |
+| `alwaysShow` | `true` | Keep the icon in the bar while disconnected, dimmed. Set to `false` to show it only while a tunnel is up. |
 
 The widget also registers an IPC target, for keybindings and scripts:
 
@@ -185,8 +186,8 @@ omarchy-shell io.github.augusto2803.fortivpn disconnect
 omarchy-shell io.github.augusto2803.fortivpn refresh
 ```
 
-`open` and `close` are there too. The panel opens even while the icon is
-hidden, and the icon stays until it closes.
+`open` and `close` are there too. With `alwaysShow` off, the panel opens even
+while the icon is hidden, and the icon stays until it closes.
 
 ## DNS
 
