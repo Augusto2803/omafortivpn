@@ -678,7 +678,13 @@ cmd_up() {
   fi
   profile=$(resolve_profile "${1:-}" "Connect to:") || exit 1
   [[ -z $profile ]] && return 0
-  omarchy-launch-floating-terminal-with-presentation "$(printf '%q %q %q' "$SELF" _run "$profile")"
+  # Not the -with-presentation launcher: it clears to the Omarchy logo first
+  # and ends on a "Done" keypress, while this window is meant to close itself
+  # once the tunnel is up. The app-id is what makes Omarchy float it; the gum
+  # styling is exported the same way that launcher does.
+  source omarchy-restart-gum 2>/dev/null || true
+  setsid uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.terminal --title=Omarchy \
+    -e "$SELF" _run "$profile"
 }
 
 cmd_down() {
