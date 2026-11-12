@@ -878,15 +878,20 @@ CONF
 }
 
 cmd_edit() {
-  local profile conf
+  local profile conf editor
   profile=$(resolve_profile "${1:-}" "Edit profile:") || exit 1
   [[ -z $profile ]] && return 0
   conf=$(conf_path "$profile")
 
+  # $EDITOR is a command line, not a path: Omarchy sets it to
+  # "omarchy-launch-editor --inline", so split it into words.
+  read -ra editor <<<"${EDITOR:-nvim}"
+  ((${#editor[@]})) || editor=(nvim)
+
   if interactive; then
-    "${EDITOR:-nvim}" "$conf"
+    "${editor[@]}" "$conf"
   else
-    omarchy-launch-floating-terminal-with-presentation "$(printf '%q %q' "${EDITOR:-nvim}" "$conf")"
+    omarchy-launch-floating-terminal-with-presentation "$(printf '%q ' "${editor[@]}" "$conf")"
   fi
 }
 cmd_dns() {
