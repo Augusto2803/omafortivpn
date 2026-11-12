@@ -961,9 +961,39 @@ cmd_rename() {
 # SHA256 of the peer's DER-encoded certificate, which is exactly what this
 # computes — so pinning here is the same check, done before the first connect
 # instead of after a failed one.
+#
+# Pinning whatever the gateway presents is trust-on-first-use: anyone on the
+# path at that moment gets pinned forever. So the chain the server sends is
+# checked first. A leaf that chains to the system trust store, for this
+# hostname, is pinned on that evidence. Anything else (a self-signed FortiGate
+# is the usual case) is only pinned after the person has compared the
+# fingerprint with the gateway's admin out-of-band and said so explicitly.
+
+# Succeeds when $1 (the leaf) chains to the system trust store through the
+# intermediates in $2, and is valid for $3. A bare IP is matched against the
+# certificate's IP SANs rather than its DNS names.
+chain_verifies() {
+  local leaf=$1 chain=$2 host=$3 flag=-verify_hostname
+  [[ $host =~ ^[0-9.]+$ || $host == *:* ]] && flag=-verify_ip
+  openssl verify -purpose sslserver -untrusted "$chain" "$flag" "$host" "$leaf" >/dev/null 2>&1
+}
+
+# trusted-cert is hand-editable, and openfortivpn will take whatever is there.
+# Anything but a SHA256 hex digest can never match a certificate, so say so
+# rather than let the connect fail with an unexplained certificate error.
+trusted_cert_is_valid() { [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
+
 cmd_trust() {
-  local profile conf host port digest
-  profile=$(resolve_profile "${1:-}" "Pin certificate for:") || exit 1
+  local profile="" conf host port digest accept_unverified=0 arg
+  for arg in "$@"; do
+    case $arg in
+      --accept-unverified) accept_unverified=1 ;;
+      -*) die "unknown option '$arg' (usage: fortivpn trust [profile] [--accept-unverified])" ;;
+      *) [[ -z $profile ]] || die "usage: fortivpn trust [profile] [--accept-unverified]"; profile=$arg ;;
+    esac
+  done
+
+  profile=$(resolve_profile "$profile" "Pin certificate for:") || exit 1
   [[ -z $profile ]] && return 0
   conf=$(conf_path "$profile")
 
@@ -972,9 +1002,15 @@ cmd_trust() {
   port=$(get_key "$conf" port); port=${port:-443}
   [[ -n $host ]] || die "profile '$profile' has no host set"
 
-  note "Fetching the certificate from $host:$port"
+  local current
+  current=$(get_key "$conf" trusted-cert)
+  if [[ -n $current ]] && ! trusted_cert_is_valid "$current"; then
+    warn "trusted-cert in $conf is not a SHA256 hex digest (64 characters, 0-9 a-f), so it can never match; it will be replaced if you pin below"
+  fi
 
-  # The DER goes to a file rather than down a pipe into sha256sum: a gateway
+  note "Fetching the certificate chain from $host:$port"
+
+  # The chain goes to files rather than down a pipe into a hash: a gateway
   # that is unreachable, or that hangs up mid-handshake, yields no bytes at
   # all, and hashing nothing produces a perfectly well-formed digest of the
   # empty string. Pinning that would overwrite a working trusted-cert with a
@@ -983,20 +1019,75 @@ cmd_trust() {
   # timeout, because a gateway that accepts the connection and then says
   # nothing would otherwise leave s_client waiting for a handshake that never
   # finishes, in a terminal with no hint of why.
-  local der
-  der=$(mktemp) || die "could not create a temporary file"
-  timeout 15 openssl s_client -connect "$host:$port" -servername "$host" </dev/null 2>/dev/null |
-    openssl x509 -outform DER 2>/dev/null >"$der"
+  local work leaf chain
+  work=$(mktemp -d) || die "could not create a temporary directory"
+  leaf=$work/leaf.pem chain=$work/chain.pem
 
-  if [[ ! -s $der ]]; then
-    rm -f "$der"
+  timeout 15 openssl s_client -connect "$host:$port" -servername "$host" -showcerts \
+    </dev/null 2>/dev/null >"$work/showcerts.txt"
+
+  # showcerts prints the leaf first, then whatever intermediates were sent.
+  awk -v dir="$work" '
+    /-----BEGIN CERTIFICATE-----/ { n++; out = sprintf("%s/cert-%d.pem", dir, n) }
+    out != "" { print > out }
+    /-----END CERTIFICATE-----/ { close(out); out = "" }
+  ' "$work/showcerts.txt"
+
+  if [[ ! -s $work/cert-1.pem ]] || ! openssl x509 -in "$work/cert-1.pem" -noout 2>/dev/null; then
+    rm -rf "$work"
+    die "could not read a certificate from $host:$port"
+  fi
+  cp "$work/cert-1.pem" "$leaf"
+  cat "$work"/cert-*.pem >"$chain"
+
+  digest=$(openssl x509 -in "$leaf" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
+  if ! [[ $digest =~ ^[0-9a-f]{64}$ ]] || [[ $digest == e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ]]; then
+    rm -rf "$work"
     die "could not read a certificate from $host:$port"
   fi
 
-  digest=$(sha256sum <"$der" | awk '{print $1}')
-  rm -f "$der"
-  [[ $digest =~ ^[0-9a-f]{64}$ ]] || die "could not read a certificate from $host:$port"
+  if chain_verifies "$leaf" "$chain" "$host"; then
+    note "Certificate chain verified against the system trust store, and it is valid for $host"
+  else
+    local subject issuer starts ends fingerprint
+    subject=$(openssl x509 -in "$leaf" -noout -subject | sed 's/^subject= *//')
+    issuer=$(openssl x509 -in "$leaf" -noout -issuer | sed 's/^issuer= *//')
+    starts=$(openssl x509 -in "$leaf" -noout -startdate | cut -d= -f2)
+    ends=$(openssl x509 -in "$leaf" -noout -enddate | cut -d= -f2)
+    fingerprint=$(openssl x509 -in "$leaf" -noout -fingerprint -sha256 | cut -d= -f2)
+    rm -rf "$work"
 
+    warn "This certificate could NOT be verified: it does not chain to a trusted authority for $host (self-signed gateways look like this)."
+    {
+      echo "  Subject:     $subject"
+      echo "  Issuer:      $issuer"
+      echo "  Valid from:  $starts"
+      echo "  Valid until: $ends"
+      echo "  SHA256:      $fingerprint"
+      echo
+      echo "  Compare the SHA256 above with the one your VPN administrator gives you,"
+      echo "  over a channel other than this connection. If it differs, someone may be"
+      echo "  intercepting the connection: do not pin it."
+    } >&2
+
+    if ((accept_unverified)); then
+      warn "--accept-unverified given: pinning without verification"
+    elif interactive; then
+      echo >&2
+      if command -v gum >/dev/null; then
+        gum confirm "Does this fingerprint match the one from your administrator? Pin it?" || die "not pinned"
+      else
+        local reply
+        read -r -p "Does this fingerprint match the one from your administrator? Pin it? [y/N] " reply
+        [[ $reply =~ ^[Yy]([Ee][Ss])?$ ]] || die "not pinned"
+      fi
+    else
+      die "refusing to pin an unverified certificate without a terminal; verify the fingerprint, then re-run with --accept-unverified"
+    fi
+  fi
+  rm -rf "$work"
+
+  trusted_cert_is_valid "$digest" || die "internal error: malformed digest '$digest'"
   set_key "$conf" trusted-cert "$digest"
   note "Pinned trusted-cert = $digest"
 }
@@ -1024,7 +1115,8 @@ Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
   fortivpn delete [profile]    Delete a profile  (--yes to skip the prompt)
   fortivpn rename <old> [new]  Rename a profile
   fortivpn use [profile]       Set the default profile
-  fortivpn trust [profile]     Pin the gateway's certificate fingerprint
+  fortivpn trust [profile]     Verify and pin the gateway's certificate  (--accept-unverified
+                               to pin a self-signed one without a prompt)
 
 Omitting [profile] opens a picker in a terminal, and uses the default profile
 elsewhere.

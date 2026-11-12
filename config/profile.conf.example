@@ -23,9 +23,11 @@ username = your.user
 
 ### Gateway certificate #######################################################
 
-# `fortivpn trust <name>` fills this in: it reads the gateway's certificate and
-# pins its SHA256 digest, which is the same value openfortivpn would print
-# after refusing an unknown certificate on the first connection.
+# `fortivpn trust <name>` fills this in: it checks the gateway's certificate
+# chain, then pins the leaf's SHA256 digest (asking you to confirm the
+# fingerprint when the chain cannot be verified). It is the same value
+# openfortivpn would print after refusing an unknown certificate. Must be a
+# 64-character lowercase hex digest.
 # trusted-cert = 0123456789abcdef...
 
 ### DNS and routes ############################################################

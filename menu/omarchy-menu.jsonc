@@ -55,7 +55,7 @@
     "icon":"󰌾",
     "label":"Pin Certificate",
     "action":"omarchy-launch-floating-terminal-with-presentation 'fortivpn trust'",
-    "description":"fetch and pin the gateway's certificate fingerprint"
+    "description":"verify and pin the gateway's certificate fingerprint"
   },
   "vpn.profiles.rename": {
     "icon":"󰑕",

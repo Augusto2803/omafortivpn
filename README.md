@@ -89,14 +89,46 @@ fortivpn new work --host vpn.example.com --username your.user
 fortivpn trust work
 ```
 
-`fortivpn trust` reads the gateway's certificate and pins its SHA256 digest as
-`trusted-cert`. It is the same value openfortivpn prints after refusing an
-unknown certificate on a first connection — this just gets it out of the way
-beforehand. Skip it and your first connection will fail with a certificate
-error, which is expected; run `fortivpn trust <profile>` then and reconnect.
+`fortivpn trust` reads the certificate chain the gateway sends and checks it
+against the system trust store, including that it is valid for the profile's
+host. If it verifies, the leaf's SHA256 digest is pinned as `trusted-cert`.
+That is the same value openfortivpn prints after refusing an unknown
+certificate on a first connection — this just gets it out of the way
+beforehand.
+
+Self-signed gateways (common for FortiGate) cannot be verified that way. For
+those, `fortivpn trust` shows the subject, issuer, validity dates and SHA256
+fingerprint, and pins only after you confirm. Compare the fingerprint with your
+VPN administrator over a channel other than the connection itself. Without a
+terminal it refuses; pass `--accept-unverified` (after checking the fingerprint)
+to pin non-interactively. A `trusted-cert` that is not a 64-character hex digest
+can never match, and is reported and replaced the next time you pin.
+
+Skip it and your first connection will fail with a certificate error, which is
+expected; run `fortivpn trust <profile>` then and reconnect.
 
 One `.conf` per gateway. See [`config/profile.conf.example`](config/profile.conf.example)
 for every option with commentary.
+
+### Profile keys
+
+A profile is a plain openfortivpn config, but the connect step only passes
+these keys to the root process, and refuses the profile (naming the key and
+line, before any `sudo` prompt) on anything else: `host`, `port` (1–65535),
+`username`, `password`, `trusted-cert` (repeatable; each must be 64 lowercase
+hex digits), `realm`, `set-dns`, `use-resolvconf`, `set-routes`,
+`half-internet-routes`, `pppd-use-peerdns`, `pppd-accept-remote`,
+`insecure-ssl`, `seclevel-1`, `no-ftm-push` (all `0` or `1`), `cipher-list`
+and `min-tls`. Comments and blank lines are fine.
+
+Deliberately refused: `pppd-plugin`, `pppd-call`, `pppd-ipparam`, `pppd-log`
+and `pinentry` (make a root process load, run or write something of your
+choosing); `pppd-ifname` (the plugin sets it); `ca-file`, `user-cert`,
+`user-key`, `pem-passphrase` (root would read a file you own — client
+certificates are not supported); `otp` (typed at connect time), `cookie` and
+`persistent`. Control characters and carriage returns in a line are rejected.
+At the prompt, the 2FA token must be 4–128 letters, digits or hyphens (or
+empty), and the password cannot contain a line break.
 
 ## Usage
 
@@ -144,7 +176,7 @@ Profiles  (~/.config/fortivpn/profiles/<name>.conf, mode 600)
   fortivpn delete [profile]    Delete a profile  (--yes to skip the prompt)
   fortivpn rename <old> [new]  Rename a profile
   fortivpn use [profile]       Set the default profile
-  fortivpn trust [profile]     Pin the gateway's certificate fingerprint
+  fortivpn trust [profile]     Verify and pin the gateway's certificate (--accept-unverified)
 ```
 
 Omitting `[profile]` opens a `gum` picker when there is a terminal to show it
