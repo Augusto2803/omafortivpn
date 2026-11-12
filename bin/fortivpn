@@ -35,6 +35,10 @@ RUN_CONF=""
 # the `sudo openfortivpn …` parent and anything else that merely mentions the
 # flag, and matching on a pattern rather than on a PID means the target is
 # resolved at signal time, inside the privileged call.
+#
+# Only processes whose real UID is root (-U 0) count. The tunnel is started by
+# systemd as root, so a process of yours that merely fakes that command line
+# is neither signalled with root's authority nor taken for a live tunnel.
 VPN_MATCH='^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]'"$IFNAME"'( |$)'
 
 die() { echo "fortivpn: $*" >&2; exit 1; }
@@ -56,6 +60,25 @@ notify() {
 announce() { interactive && note "$1"; notify "$1"; return 0; }
 
 interactive() { [[ -t 0 && -t 1 ]]; }
+
+# The connect window's banner, in the font and green of Omarchy's own logo.
+show_logo() {
+  interactive || return 0
+  clear
+  printf '\033[32m'
+  cat <<'LOGO'
+ ▄█████▄    ▄▄▄▄███▄▄▄▄      ▄███████    ▄████████  ▄█████▄     ▄███████     ███      ▄█   ▄█   █▄     ▄███████▄ ███▄▄▄▄
+███   ███ ▄██▀▀▀███▀▀▀██▄   ███   ███   ███    ███ ███   ███   ███   ███ ▀█████████▄ ███  ███   ███   ███    ███ ███▀▀▀██▄
+███   ███ ███   ███   ███   ███   ███   ███    █▀  ███   ███   ███   ███    ▀███▀▀██ ███▌ ███   ███   ███    ███ ███   ███
+███   ███ ███   ███   ███   ███   ███  ▄███▄▄▄     ███   ███  ▄███▄▄▄██▀     ███   ▀ ███▌ ███   ███   ███    ███ ███   ███
+███   ███ ███   ███   ███ ▀██████████ ▀▀███▀▀▀     ███   ███ ▀▀███▀▀▀▀       ███     ███▌ ███   ███ ▀█████████▀  ███   ███
+███   ███ ███   ███   ███   ███   ███   ███        ███   ███ ▀██████████     ███     ███  ███   ███   ███        ███   ███
+███   ███ ███   ███   ███   ███   ███   ███        ███   ███   ███   ███     ███     ███  ███   ███   ███        ███   ███
+ ▀█████▀   ▀█   ███   █▀    ███   █▀    ███         ▀█████▀    ███   ███    ▄████▀   █▀    ▀█████▀   ▄████▀       ▀█   █▀
+                                                               ███   ███
+LOGO
+  printf '\033[0m\n'
+}
 
 need() { command -v "$1" >/dev/null || die "'$1' is required but not installed"; }
 
@@ -85,6 +108,14 @@ ask_plain() {
 # Profile names become file names, so keep them to something that cannot
 # escape PROFILE_DIR or confuse the shell.
 valid_name() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $1 != *..* ]]; }
+
+# 1–65535, no sign, no leading zero: what a TCP port is, and nothing a config
+# parser or a shell could read as something else.
+valid_port() { [[ $1 =~ ^[1-9][0-9]{0,4}$ ]] && (($1 <= 65535)); }
+
+# One-time tokens are short alphanumerics (hyphens appear in some vendors'
+# formats). Empty is allowed by the caller: push approval, or no 2FA.
+valid_otp() { [[ $1 =~ ^[A-Za-z0-9-]{4,128}$ ]]; }
 
 conf_path() { echo "$PROFILE_DIR/$1.conf"; }
 
@@ -239,9 +270,97 @@ set_dns_routing_domains() {
 }
 
 
+# ---------------------------------------------------------------- root-bound profile
+
+# The profile is yours to edit, but what root's openfortivpn reads at connect
+# time must not be. openfortivpn accepts options that make a root process load
+# an arbitrary shared object (pppd-plugin), run an arbitrary pppd peer file
+# (pppd-call), write to an arbitrary path (pppd-log), or hand a program
+# argument to ip-up scripts (pppd-ipparam), and it reads whatever file the
+# path-valued keys name. So the profile is read once, here, into memory; every
+# line must be a comment or an allowlisted `key = value` whose value has the
+# shape that key can legitimately take; and what is handed to root is the
+# re-rendered result, never the file. Nothing unknown passes, so a key added
+# to openfortivpn later stays out until it is reviewed and added here.
+#
+# Path-valued keys (ca-file, user-cert, user-key) are refused rather than
+# copied: root would be reading a file you own, which is the very thing the
+# root-owned runtime directory exists to avoid, and a client certificate is
+# not part of the username + password (+ 2FA) flow this plugin supports.
+#
+# `password` is allowed because the profile example documents storing one for
+# gateways without 2FA; `otp` is refused because a token is only ever typed at
+# the prompt. pppd-ifname is ours to set. persistent would reconnect with a
+# token nobody is there to type, and pinentry runs a program as root.
+profile_value_ok() {
+  local key=$1 value=$2
+  case $key in
+    host) [[ $value =~ ^[][A-Za-z0-9._:-]+$ ]] ;;
+    port) valid_port "$value" ;;
+    username | password) [[ -n $value ]] ;;
+    trusted-cert) trusted_cert_is_valid "$value" ;;
+    set-dns | use-resolvconf | set-routes | half-internet-routes | \
+      pppd-use-peerdns | pppd-accept-remote | insecure-ssl | seclevel-1 | no-ftm-push)
+      [[ $value =~ ^[01]$ ]] ;;
+    realm) [[ $value =~ ^[A-Za-z0-9._-]+$ ]] ;;
+    cipher-list) [[ $value =~ ^[A-Za-z0-9:!+@=_.,-]+$ ]] ;;
+    min-tls) [[ $value =~ ^[A-Za-z0-9._]+$ ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prints the sanitized profile, one canonical `key = value` per line, or dies
+# naming the first offending key and line. Call as `body=$(profile_filter F)
+# || exit 1`: the message is already on stderr.
+profile_filter() {
+  local file=$1 line key value lineno=0 hint have_host=0
+  [[ -r $file ]] || die "cannot read $file"
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    ((lineno += 1))
+    # Tabs are allowed, so they are dropped before testing. A bracket built
+    # from raw $'\x01'… bytes does not work here: bash uses \x01 and \x7f as
+    # internal quoting markers, mangles them in a regex, and every line then
+    # fails with "invalid regular expression" — silently skipping this check.
+    if [[ ${line//$'\t'/} == *[[:cntrl:]]* ]]; then
+      die "$file:$lineno: control character in line (carriage returns included)"
+    fi
+    [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
+
+    if [[ ! $line =~ ^[[:space:]]*([A-Za-z0-9-]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]]; then
+      die "$file:$lineno: not a 'key = value' line"
+    fi
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[2]}
+
+    case $key in
+      pppd-plugin | pppd-call | pppd-ipparam | pppd-log | pppd-ifname | pinentry)
+        hint="would let a root process load, run or write something of your choosing" ;;
+      ca-file | user-cert | user-key | pem-passphrase)
+        hint="refers to a file you own that root would read; client certificates are not supported" ;;
+      otp | cookie | persistent)
+        hint="is not accepted from a profile: the token is typed at connect time and there is no reconnect" ;;
+      *) hint="is not an option this plugin passes to a root process" ;;
+    esac
+    profile_value_ok "$key" "$value" || {
+      if [[ $key =~ ^(host|port|username|password|trusted-cert|set-dns|use-resolvconf|set-routes|half-internet-routes|pppd-use-peerdns|pppd-accept-remote|insecure-ssl|seclevel-1|no-ftm-push|realm|cipher-list|min-tls)$ ]]; then
+        [[ $key == trusted-cert ]] &&
+          die "$file:$lineno: malformed trusted-cert; re-run: fortivpn trust $(basename "$file" .conf)"
+        die "$file:$lineno: invalid value for '$key'"
+      fi
+      die "$file:$lineno: '$key' $hint"
+    }
+    [[ $key == host ]] && have_host=1
+    printf '%s = %s\n' "$key" "$value"
+  done <"$file"
+
+  ((have_host)) || die "$file: no 'host' set"
+}
+
+
 # ---------------------------------------------------------------- state
 
-vpn_pid() { pgrep -f -- "$VPN_MATCH" | head -n1; }
+vpn_pid() { pgrep -U 0 -f -- "$VPN_MATCH" | head -n1; }
 
 tunnel_ip() {
   ip -4 -o addr show dev "$IFNAME" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
@@ -380,12 +499,18 @@ run_cleanup() {
 # to ask for them; the tunnel itself is then started in a session of its own,
 # so this window can close while the connection stays up.
 cmd_run() {
-  local profile=$1 conf log password="" token="" waited=0 limit=90 tail_pid=""
+  local profile=$1 conf log body password="" token="" waited=0 limit=90 tail_pid=""
   conf=$(conf_path "$profile")
   [[ -f $conf ]] || die "no profile named '$profile'"
   [[ -x $OPENFORTIVPN ]] || die "'$OPENFORTIVPN' is required but not installed"
+
+  # Validate (and snapshot) the profile before anything asks for root: a
+  # rejected key should cost no sudo prompt, and what is checked here is the
+  # very text that is sent to root below.
+  body=$(profile_filter "$conf") || exit 1
   need systemd-run
 
+  show_logo
   echo "Connecting to '$profile'…"
   echo "This window closes once the tunnel is up. Disconnect with: fortivpn down"
   [[ -z $(get_key "$conf" trusted-cert) ]] &&
@@ -399,11 +524,13 @@ cmd_run() {
   # A cancelled prompt has to stop the connection, not fall through to one
   # with no password in it: with no terminal left to ask on, openfortivpn
   # would fail on the far side of a window that had already closed.
-  if [[ -z $(get_key "$conf" password) ]]; then
+  if ! grep -q '^password = ' <<<"$body"; then
     password=$(ask_secret "VPN account password:") || die "cancelled"
     [[ -n $password ]] || die "a password is required"
   fi
+  [[ $password != *$'\n'* && $password != *$'\r'* ]] || die "the password cannot contain a line break"
   token=$(ask_plain "2FA token (leave empty for push approval, or no 2FA):") || die "cancelled"
+  [[ -z $token ]] || valid_otp "$token" || die "the 2FA token must be 4–128 letters, digits or hyphens"
   echo
 
   # openfortivpn reads the password and the one-time token from its config
@@ -423,7 +550,7 @@ cmd_run() {
   trap run_cleanup EXIT
 
   {
-    cat "$conf"
+    printf '%s\n' "$body"
     [[ -n $password ]] && printf 'password = %s\n' "$password"
     [[ -n $token ]] && printf 'otp = %s\n' "$token"
     :
@@ -453,9 +580,36 @@ cmd_run() {
   #
   # --persistent is deliberately left out: a reconnect would need a fresh
   # one-time token, and by then there is nobody at a terminal to type one.
+  #
+  # The unit is sandboxed because the profile is only partly trusted input and
+  # the process is a network-facing parser running as root. What each setting
+  # costs openfortivpn/pppd, which need netlink routes, /run pid files,
+  # resolvectl over the system bus and a read of /etc/ppp, and write nothing
+  # under /usr, /boot or /home:
+  #   ProtectHome=yes       no business in /home (profiles reach it as a pipe)
+  #   PrivateTmp=yes        its own /tmp
+  #   ProtectSystem=full    /usr, /boot and /etc read-only; /run and /var stay
+  #                         writable. /etc/resolv.conf is re-opened writable
+  #                         because a profile with use-resolvconf = 0 makes
+  #                         openfortivpn edit it in place.
+  #   NoNewPrivileges=yes   nothing it execs can gain more than root already is
+  #   UMask=0077            files it creates are root's alone
+  # Restart=no is stated rather than assumed: a restart would reuse a spent
+  # one-time token, and by then the config is gone. TimeoutStartSec bounds a
+  # launch that hangs; TimeoutStopSec turns a SIGINT that is ignored into
+  # SIGKILL instead of a unit stuck deactivating.
   sudo systemd-run --quiet --collect --unit="$UNIT" \
     --property=Type=exec \
     --property=KillSignal=SIGINT \
+    --property=Restart=no \
+    --property=TimeoutStartSec=30 \
+    --property=TimeoutStopSec=30 \
+    --property=ProtectHome=yes \
+    --property=PrivateTmp=yes \
+    --property=ProtectSystem=full \
+    --property=ReadWritePaths=-/etc/resolv.conf \
+    --property=NoNewPrivileges=yes \
+    --property=UMask=0077 \
     --property=StandardOutput=append:"$log" \
     --property=StandardError=append:"$log" \
     --property=ExecStopPost="/usr/bin/rm -f -- $RUN_CONF" \
@@ -543,9 +697,9 @@ cmd_down() {
   # plugin's interface is signalled, so a tunnel someone else on this machine
   # is running — or one of your own on another interface — is left alone.
   if sudo -n true 2>/dev/null; then
-    sudo pkill -INT -f -- "$VPN_MATCH"
+    sudo pkill -U 0 -INT -f -- "$VPN_MATCH"
   else
-    pkexec /usr/bin/pkill -INT -f -- "$VPN_MATCH"
+    pkexec /usr/bin/pkill -U 0 -INT -f -- "$VPN_MATCH"
   fi
 }
 
@@ -629,7 +783,7 @@ cmd_new() {
   fi
   [[ -n $username ]] || die "username is required"
 
-  [[ $port =~ ^[0-9]+$ ]] || die "port must be a number"
+  valid_port "$port" || die "port must be a number from 1 to 65535"
 
   for domain in "${dns_domains[@]}"; do
     domain=${domain%.}

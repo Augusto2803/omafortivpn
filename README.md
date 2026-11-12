@@ -26,10 +26,13 @@ unit that starts at boot. So:
   `openfortivpn` as a transient systemd unit and closes as soon as the tunnel
   is up. The window holds nothing the connection needs — the tunnel outlives
   it, and `fortivpn down` is what ends it.
-- The secrets reach the detached process through a copy of the profile with
-  `password` and `otp` appended, piped to root and written by root to
-  `/run/fortivpn/<name>.conf` (tmpfs, root-only directory, mode 600). It is
-  deleted as soon as the handshake settles, and again by the unit when the
+- The secrets reach the detached process through a sanitized copy of the
+  profile with `password` and `otp` appended, piped to root and written by root
+  to `/run/fortivpn/<name>.conf` (tmpfs, root-only directory, mode 600). The
+  profile is yours to edit, so root never takes it as-is: it is read once and
+  every line must be a comment or an allowlisted `key = value` (see
+  [Profile keys](#profile-keys)), re-rendered, and only that is piped. The file
+  is deleted as soon as the handshake settles, and again by the unit when the
   tunnel stops; the profile itself never gains a password it did not already
   have.
 - The handshake is logged to `/var/log/fortivpn/<uid>/<name>.log`, created by
@@ -40,7 +43,9 @@ unit that starts at boot. So:
   nothing running as you can swap a file out between the sudo prompt and the
   moment root uses it.
 - **Disconnect** sends `SIGINT`, which is openfortivpn's clean shutdown: it
-  removes the routes and the DNS registration before exiting.
+  removes the routes and the DNS registration before exiting. It only targets
+  processes running as root, so a process of yours that fakes the command line
+  is neither signalled nor mistaken for a live tunnel.
 - The bar widget only **reads** state — does the `fortivpn0` interface have an
   address? — so it needs no privilege at all.
 
@@ -237,6 +242,10 @@ sudo install -d -m 0750 -o root -g <your gid> /var/log/fortivpn/<uid>
 sudo install -m 0640 -o root -g <your gid> /dev/null /var/log/fortivpn/<uid>/<name>.log
 sudo systemd-run --quiet --collect --unit=fortivpn-tunnel \
   --property=Type=exec --property=KillSignal=SIGINT \
+  --property=Restart=no --property=TimeoutStartSec=30 --property=TimeoutStopSec=30 \
+  --property=ProtectHome=yes --property=PrivateTmp=yes \
+  --property=ProtectSystem=full --property=ReadWritePaths=-/etc/resolv.conf \
+  --property=NoNewPrivileges=yes --property=UMask=0077 \
   --property=StandardOutput=append:/var/log/fortivpn/<uid>/<name>.log \
   --property=StandardError=append:/var/log/fortivpn/<uid>/<name>.log \
   --property=ExecStopPost="/usr/bin/rm -f -- /run/fortivpn/<name>.conf" \
@@ -251,7 +260,7 @@ sudo resolvectl domain fortivpn0 <gateway search domains> ~<zone>...
 sudo resolvectl flush-caches
 
 # Disconnect — sudo -n when a cached credential allows it, pkexec otherwise
-pkill -INT -f -- '^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]fortivpn0( |$)'
+pkill -U 0 -INT -f -- '^(/[^ ]*/)?openfortivpn( .*)? --pppd-ifname[= ]fortivpn0( |$)'
 ```
 
 Nothing else needs root: creating, editing, deleting and pinning profiles never
@@ -276,6 +285,12 @@ sudo and the window. `Type=exec` makes that ask wait until `openfortivpn` has
 actually been exec'd, so a launch that never got off the ground is reported
 here rather than as a process that mysteriously fails to appear.
 
+The tunnel's unit is sandboxed, since it is a network-facing parser running as
+root: no `/home` (`ProtectHome`), a private `/tmp`, `/usr`, `/boot` and `/etc`
+read-only (`ProtectSystem=full`, with `/etc/resolv.conf` left writable for
+profiles that set `use-resolvconf = 0`), `NoNewPrivileges`, `UMask=0077`, no
+restart (a restart would reuse a spent token), and start/stop timeouts.
+
 Disconnecting describes its target **by pattern**, inside the privileged call,
 rather than looking up a PID first and handing that number to `sudo`. A PID
 looked up a moment earlier can be recycled onto an unrelated process, and the
@@ -286,7 +301,10 @@ The pattern is deliberately narrow. It is anchored at the start of the command
 line, so the `sudo openfortivpn …` parent and any other program that merely
 mentions the flag do not match, and it requires the interface this plugin
 starts its own tunnels on — so a second user's tunnel, or one of your own on
-another interface, is never signalled.
+another interface, is never signalled. `-U 0` restricts it to processes whose
+real UID is root, which is what systemd starts the tunnel as: a process of
+yours that copies the command line can neither receive the signal as root nor
+make `status` report a tunnel that is not there.
 
 People often ask how to make the password prompt go away with a `NOPASSWD`
 sudoers rule. **This plugin does not ship one and does not recommend writing
@@ -311,6 +329,18 @@ read `sudoers(5)` and `openfortivpn(1)` in full and own the consequences.
 - **Username + password (+ 2FA) only.** For SAML/SSO, openfortivpn has
   `--saml-login`; the connect path would need that flag and the browser would
   become part of the login.
+
+## Tests
+
+```bash
+tests/run.sh
+```
+
+Plain bash, offline, no `sudo`: it checks the profile allowlist, the port and
+token validators, the disconnect pattern, and `fortivpn trust` against
+throwaway local TLS servers (needs `openssl`). It uses a temporary `HOME`, so
+your profiles are never read. The trust model it guards is in
+[SECURITY.md](SECURITY.md).
 
 ## Uninstall
 
