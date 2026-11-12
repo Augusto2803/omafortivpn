@@ -124,12 +124,14 @@ else
   say "Copying the plugin to $PLUGIN_DIR"
   mkdir -p "$PLUGIN_DIR"
   # --delete keeps a reinstall from leaving files behind that the plugin no
-  # longer ships; .git is excluded so the copy is plugin files only.
+  # longer ships; .git and the test suite are excluded so the copy is plugin
+  # files only, and --delete-excluded clears a tests/ an older install copied.
   if command -v rsync >/dev/null; then
-    rsync -a --delete --exclude .git --exclude .gitignore "$SRC/" "$PLUGIN_DIR/"
+    rsync -a --delete --delete-excluded --exclude .git --exclude .gitignore --exclude /tests \
+      "$SRC/" "$PLUGIN_DIR/"
   else
     rm -rf "${PLUGIN_DIR:?}"/*
-    (cd "$SRC" && tar --exclude=.git --exclude=.gitignore -cf - .) | tar -xf - -C "$PLUGIN_DIR"
+    (cd "$SRC" && tar --exclude=.git --exclude=.gitignore --exclude=./tests -cf - .) | tar -xf - -C "$PLUGIN_DIR"
   fi
 fi
 

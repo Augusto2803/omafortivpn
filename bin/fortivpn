@@ -1131,6 +1131,9 @@ USAGE
 
 # ---------------------------------------------------------------- dispatch
 
+# Sourced (by the tests), the functions are defined and nothing else happens.
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
+
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
 case "${1:-status}" in
