@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.augusto2803.fortivpn",
-  "name": "FortiVPN",
+  "id": "omafortivpn",
+  "name": "OmaFortiVPN",
   "version": "1.5.0",
   "author": "Augusto Bauer Domingos",
   "license": "MIT",

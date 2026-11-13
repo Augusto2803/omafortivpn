@@ -20,8 +20,8 @@ import "Model.js" as Model
 // CLI opens a floating one and closes it once the tunnel is up.
 Panel {
   id: root
-  moduleName: "io.github.augusto2803.fortivpn"
-  ipcTarget: "io.github.augusto2803.fortivpn"
+  moduleName: "omafortivpn"
+  ipcTarget: "omafortivpn"
   manageIpc: false
 
   property var status: Model.DISCONNECTED
