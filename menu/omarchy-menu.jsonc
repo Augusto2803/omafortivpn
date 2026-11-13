@@ -26,7 +26,7 @@
   "vpn.status": {
     "icon":"󰋼",
     "label":"Status",
-    "action":"omarchy-shell omafortivpn open",
+    "action":"omarchy-shell io.github.augusto2803.omafortivpn open",
     "description":"open the FortiVPN panel: tunnel, profiles, last error",
     "when":"omarchy-cmd-present fortivpn"
   },

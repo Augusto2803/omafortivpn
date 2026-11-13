@@ -11,7 +11,7 @@ is where the password and the 2FA token get typed.
 
 | | |
 |---|---|
-| Plugin id | `omafortivpn` |
+| Plugin id | `io.github.augusto2803.omafortivpn` |
 | Kind | `bar-widget` |
 | Requires | Omarchy 4, `openfortivpn`, `jq`, `openssl`, `gum` |
 
@@ -60,7 +60,7 @@ That is enough for the bar widget. To also get the `fortivpn` command on your
 plugin directory:
 
 ```bash
-~/.config/omarchy/plugins/omafortivpn/install.sh
+~/.config/omarchy/plugins/io.github.augusto2803.omafortivpn/install.sh
 ```
 
 Or, from a clone anywhere on disk, `./install.sh` does both steps at once. It
@@ -205,7 +205,7 @@ handshake. A clean `fortivpn down` leaves them empty.
 In `~/.config/omarchy/shell.json`, on the widget's layout entry:
 
 ```json
-{ "id": "omafortivpn", "refreshIntervalSec": 5, "alwaysShow": true }
+{ "id": "io.github.augusto2803.omafortivpn", "refreshIntervalSec": 5, "alwaysShow": true }
 ```
 
 | Key | Default | Meaning |
@@ -216,11 +216,11 @@ In `~/.config/omarchy/shell.json`, on the widget's layout entry:
 The widget also registers an IPC target, for keybindings and scripts:
 
 ```bash
-omarchy-shell omafortivpn toggle        # open or close the panel
-omarchy-shell omafortivpn toggleTunnel  # connect the default profile, or disconnect
-omarchy-shell omafortivpn connect
-omarchy-shell omafortivpn disconnect
-omarchy-shell omafortivpn refresh
+omarchy-shell io.github.augusto2803.omafortivpn toggle        # open or close the panel
+omarchy-shell io.github.augusto2803.omafortivpn toggleTunnel  # connect the default profile, or disconnect
+omarchy-shell io.github.augusto2803.omafortivpn connect
+omarchy-shell io.github.augusto2803.omafortivpn disconnect
+omarchy-shell io.github.augusto2803.omafortivpn refresh
 ```
 
 `open` and `close` are there too. With `alwaysShow` off, the panel opens even
@@ -377,7 +377,7 @@ your profiles are never read. The trust model it guards is in
 ## Uninstall
 
 ```bash
-~/.config/omarchy/plugins/omafortivpn/uninstall.sh
+~/.config/omarchy/plugins/io.github.augusto2803.omafortivpn/uninstall.sh
 ```
 
 It disconnects an open tunnel first, removes the bar widget, the `fortivpn`
@@ -394,7 +394,7 @@ Your profiles survive by default.
 To remove the plugin files without the script:
 
 ```bash
-omarchy plugin remove omafortivpn
+omarchy plugin remove io.github.augusto2803.omafortivpn
 ```
 
 ## License
