@@ -513,7 +513,7 @@ cmd_run() {
   show_logo
   echo "Connecting to '$profile'…"
   echo "This window closes once the tunnel is up. Disconnect with: fortivpn down"
-  [[ -z $(get_key "$conf" trusted-cert) ]] &&
+  grep -q '^trusted-cert = ' <<<"$body" ||
     warn "This profile has no trusted-cert yet. If the gateway certificate is rejected, run: fortivpn trust $profile"
   echo
 
