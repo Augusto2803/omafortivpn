@@ -132,18 +132,24 @@ normalize_host() {
   echo "$raw"
 }
 
+# Only names valid_name accepts are listed: a file dropped into PROFILE_DIR
+# under any other name is never offered, picked, or made the default.
 list_profiles() {
+  local name
   find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.conf' -printf '%f\n' 2>/dev/null |
-    sed 's/\.conf$//' | sort
+    sed 's/\.conf$//' | sort |
+    while IFS= read -r name; do valid_name "$name" && printf '%s\n' "$name"; done
   return 0
 }
 
+# The default file is yours to edit, so what it holds is validated like any
+# name typed on the command line before it can reach a path root writes to.
 default_profile() {
   local saved
   if [[ -r $DEFAULT_FILE ]]; then
     saved=$(<"$DEFAULT_FILE")
     saved=${saved//[[:space:]]/}
-    [[ -n $saved && -f $(conf_path "$saved") ]] && { echo "$saved"; return 0; }
+    valid_name "$saved" && [[ -f $(conf_path "$saved") ]] && { echo "$saved"; return 0; }
   fi
   list_profiles | head -n1
 }
@@ -499,7 +505,10 @@ run_cleanup() {
 # to ask for them; the tunnel itself is then started in a session of its own,
 # so this window can close while the connection stays up.
 cmd_run() {
-  local profile=$1 conf log body password="" token="" waited=0 limit=90 tail_pid=""
+  local profile=${1:-} conf log body password="" token="" waited=0 limit=90 tail_pid=""
+  # The name becomes root's config and log path below. Checked here, at the
+  # point of use, whichever route it came by: argv, the picker, the default.
+  valid_name "$profile" || die "invalid profile name '$profile'"
   conf=$(conf_path "$profile")
   [[ -f $conf ]] || die "no profile named '$profile'"
   [[ -x $OPENFORTIVPN ]] || die "'$OPENFORTIVPN' is required but not installed"
