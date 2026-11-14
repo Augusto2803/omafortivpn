@@ -83,8 +83,8 @@ meant to do, so use it only after comparing the fingerprint.
 
 ## Reporting a vulnerability
 
-Use [GitHub security advisories](https://github.com/Augusto2803/omarchy-fortivpn/security/advisories/new)
-on Augusto2803/omarchy-fortivpn. Please do not open a public issue for it, and
+Use [GitHub security advisories](https://github.com/Augusto2803/omafortivpn/security/advisories/new)
+on Augusto2803/omafortivpn. Please do not open a public issue for it, and
 do not post passwords, tokens, certificate fingerprints or gateway addresses
 anywhere public, including in the advisory's title.
 

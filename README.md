@@ -52,7 +52,7 @@ unit that starts at boot. So:
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/Augusto2803/omarchy-fortivpn.git --enable
+omarchy plugin add https://github.com/Augusto2803/omafortivpn.git --enable
 ```
 
 That is enough for the bar widget. To also get the `fortivpn` command on your

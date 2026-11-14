@@ -5,7 +5,7 @@
   "version": "1.5.1",
   "author": "Augusto Bauer Domingos",
   "license": "MIT",
-  "homepage": "https://github.com/Augusto2803/omarchy-fortivpn",
+  "homepage": "https://github.com/Augusto2803/omafortivpn",
   "description": "FortiGate SSL VPN indicator and panel for the Omarchy bar, on top of openfortivpn. The icon stays in the bar, dimmed while disconnected; middle click connects or disconnects, and its panel shows the tunnel, switches profiles, and says why the last connection failed or dropped. Connecting opens a floating terminal because the password and 2FA token have to be typed.",
   "kinds": [
     "bar-widget"
